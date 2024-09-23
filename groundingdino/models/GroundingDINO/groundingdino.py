@@ -15,7 +15,7 @@
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
 import copy
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -224,7 +224,12 @@ class GroundingDINO(nn.Module):
     def init_ref_points(self, use_num_queries):
         self.refpoint_embed = nn.Embedding(use_num_queries, self.query_dim)
 
-    def forward(self, samples: NestedTensor, targets: List = None, **kw):
+    def forward(self, samples: NestedTensor, 
+                input_ids: Optional[torch.Tensor] = None, 
+                attention_mask: Optional[torch.Tensor] = None,
+                position_ids: Optional[torch.Tensor] = None,
+                token_type_ids: Optional[torch.Tensor] = None,
+                text_self_attention_masks: Optional[torch.Tensor] = None):
         """The forward expects a NestedTensor, which consists of:
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
            - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -239,45 +244,17 @@ class GroundingDINO(nn.Module):
            - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                             dictionnaries containing the two above keys for each decoder layer.
         """
-        if targets is None:
-            captions = kw["captions"]
-        else:
-            captions = [t["caption"] for t in targets]
-
-        # encoder texts
-        tokenized = self.tokenizer(captions, padding="longest", return_tensors="pt").to(
-            samples.device
-        )
-        (
-            text_self_attention_masks,
-            position_ids,
-            cate_to_token_mask_list,
-        ) = generate_masks_with_special_tokens_and_transfer_map(
-            tokenized, self.specical_tokens, self.tokenizer
-        )
-
-        if text_self_attention_masks.shape[1] > self.max_text_len:
-            text_self_attention_masks = text_self_attention_masks[
-                :, : self.max_text_len, : self.max_text_len
-            ]
-            position_ids = position_ids[:, : self.max_text_len]
-            tokenized["input_ids"] = tokenized["input_ids"][:, : self.max_text_len]
-            tokenized["attention_mask"] = tokenized["attention_mask"][:, : self.max_text_len]
-            tokenized["token_type_ids"] = tokenized["token_type_ids"][:, : self.max_text_len]
-
-        # extract text embeddings
-        if self.sub_sentence_present:
-            tokenized_for_encoder = {k: v for k, v in tokenized.items() if k != "attention_mask"}
-            tokenized_for_encoder["attention_mask"] = text_self_attention_masks
-            tokenized_for_encoder["position_ids"] = position_ids
-        else:
-            # import ipdb; ipdb.set_trace()
-            tokenized_for_encoder = tokenized
+        tokenized_for_encoder ={}
+        
+        tokenized_for_encoder["input_ids"] = input_ids
+        tokenized_for_encoder["attention_mask"] = text_self_attention_masks
+        tokenized_for_encoder["position_ids"] = position_ids
+        tokenized_for_encoder["token_type_ids"] = token_type_ids
 
         bert_output = self.bert(**tokenized_for_encoder)  # bs, 195, 768
 
         encoded_text = self.feat_map(bert_output["last_hidden_state"])  # bs, 195, d_model
-        text_token_mask = tokenized.attention_mask.bool()  # bs, 195
+        text_token_mask = attention_mask.bool()  # bs, 195
         # text_token_mask: True for nomask, False for mask
         # text_self_attention_masks: True for nomask, False for mask
 
@@ -359,9 +336,7 @@ class GroundingDINO(nn.Module):
         #     interm_class = self.transformer.enc_out_class_embed(hs_enc[-1], text_dict)
         #     out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
         #     out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
-        unset_image_tensor = kw.get('unset_image_tensor', True)
-        if unset_image_tensor:
-            self.unset_image_tensor() ## If necessary
+        
         return out
 
     @torch.jit.unused
