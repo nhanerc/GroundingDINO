@@ -14,12 +14,18 @@ def draw_boxes_to_image(
     phrases: T.List[str],
     confs: T.List[float],
 ) -> None:
+    colors = set()
     for box, phrase, conf in zip(boxes, phrases, confs):
-        box = box.astype(np.int32)
+        x1, y1, x2, y2 = box.astype(np.int32)
 
-        image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        color = np.random.randint(0, 256, 3)
+        while tuple(color) in colors:
+            color = np.random.randint(0, 256, 3)
+        colors.add(tuple(color))
+
+        image = cv2.rectangle(image, (x1, y1), (x2, y2), color.tolist(), 2)
         image = cv2.putText(
-            image, f"{phrase} ({conf:.2f})", (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2
+            image, f"{phrase} ({conf:.2f})", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1
         )
 
 
